@@ -20,20 +20,20 @@ class BookKeeper:
                'Accept': 'application/json'}
 
 
-    monthlyData = {}
     noDonut = False
     crystalBall = False
     noCreditCard = False
     transactions = None
 
     def __init__(self):
-        #r = requests.post(self.SOURCE_URL, data=json.dumps(self.DATA), headers=self.HEADERS)
-        f = open('source_capone.txt', 'r')
+        r = requests.post(self.SOURCE_URL, data=json.dumps(self.DATA), headers=self.HEADERS)
+        #f = open('source_capone.txt', 'r')
         # source_data = json.loads(r.text)
-        self.transactions = json.loads(f.read())["transactions"]
+        # self.transactions = json.loads(f.read())["transactions"]
+        self.transactions = json.loads(r.text)["transactions"]
 
-    def includePredictedTransactions(self):
-        now = datetime.datetime.now()
+    def includePredictedTransactions(self, transactions):
+        now = datetime.now()
         cur_year = now.year
         cur_month = now.month
 
@@ -44,61 +44,85 @@ class BookKeeper:
 
         r = requests.post(url, data=json.dumps(self.DATA), headers=self.HEADERS)
         predictedTransactions = json.loads(r.text)["transactions"]
-        self.transactions += predictedTransactions
+        for p in predictedTransactions:
+            transactions.append(p)
 
-    def excludeCreditCardTransactions(self):
+        return transactions
+
+    def excludeCreditCardTransactions(self, transactions):
         #assumption: transactions list is sorted by transaction-time
         cc_transactions = set([])
+        ts = transactions
         index = 0
-        for transaction in self.transactions[:-1]:
+        for transaction in ts:
             transc_time = datetime.strptime(transaction["transaction-time"],'%Y-%m-%dT%H:%M:%S.%fZ')
             transc_id = transaction["transaction-id"]
             amount = transaction["amount"]
-            neighborsDateTime = datetime.strptime(self.transactions[index+1]["transaction-time"],'%Y-%m-%dT%H:%M:%S.%fZ')
-            while (transc_time + timedelta(hours=24) > neighborsDateTime and index < len(self.transactions)):
-                neighborsDateTime = datetime.strptime(self.transactions[index]["transaction-time"],'%Y-%m-%dT%H:%M:%S.%fZ')
-                if amount == -(self.transactions[index]["amount"]):
-                    cc_transactions.add(transaction["transaction-id"])
-                    cc_transactions.add(self.transactions[index]["transaction-id"])
-                index += 1
 
-        # print len(self.transactions)
+            next_index = index+1
+            if next_index >= len(ts):
+                break
+            nextDateTime = datetime.strptime(ts[next_index]["transaction-time"],'%Y-%m-%dT%H:%M:%S.%fZ')
+            while (transc_time + timedelta(hours=24) > nextDateTime and next_index < len(transactions)):
+                if amount == -(transactions[next_index]["amount"]):
+                    cc_transactions.add(transaction["transaction-id"])
+                    cc_transactions.add(transactions[next_index]["transaction-id"])
+                    break
+
+                next_index += 1
+                if next_index >= len(ts):
+                    break
+                nextDateTime = datetime.strptime(ts[next_index]["transaction-time"],'%Y-%m-%dT%H:%M:%S.%fZ')
+
+            index+=1
+
         temp_new_transactions = []
-        for transaction in self.transactions:
+        for transaction in ts:
             if transaction["transaction-id"] not in cc_transactions:
                 temp_new_transactions.append(transaction)
+            else:
+                print 'transaction id:{0}, merchant:{1}'.format(transaction["transaction-id"], transaction["merchant"])
 
-        self.transactions = temp_new_transactions
+
+
+        ts = temp_new_transactions
+
+        return ts
         # print len(self.transactions)
 
-    def parseData(self):
+    def parseData(self, transactions):
+        monthlyMap = {}
+        ts = transactions
+
         if self.crystalBall:
-            self.includePredictedTransactions()
+            ts = self.includePredictedTransactions(ts)
 
         if self.noCreditCard:
-            self.excludeCreditCardTransactions()
+            ts = self.excludeCreditCardTransactions(ts)
 
-        for transc in self.transactions:
-            year_month = transc["transaction-time"][:7]
+        for t in ts:
+            year_month = t["transaction-time"][:7]
             if self.noDonut:
-                if ("krispy kreme donuts" in transc["merchant"].lower() or
-                    "dunkin #336784" in transc["merchant"].lower()):
+                if ("krispy kreme donuts" in t["merchant"].lower() or
+                    "dunkin #336784" in t["merchant"].lower()):
                     continue
 
-            if year_month not in self.monthlyData:
-                self.monthlyData[year_month] = [transc]
+            if year_month not in monthlyMap:
+                monthlyMap[year_month] = [t]
             else:
-                self.monthlyData[year_month].append(transc)
+                monthlyMap[year_month].append(t)
+
+        return monthlyMap
 
 
-    def showMonthlyIncomeExpenditure(self):
+    def showMonthlyIncomeExpenditure(self, monthlyData):
         totalSpent = 0
         totalIncome = 0
 
-        for ym in sorted(self.monthlyData.keys()):
+        for ym in sorted(monthlyData.keys()):
             spent = 0
             income = 0
-            for transc in self.monthlyData[ym]:
+            for transc in monthlyData[ym]:
                 #normalize from centocent to dollar
                 amount = float(transc["amount"]/20000)
 
@@ -111,14 +135,14 @@ class BookKeeper:
             totalIncome += income
             print '{0}      spent: ${1:,.2f}        income: ${2:,.2f}'.format(ym, spent, income)
 
-        monthCounts = len(self.monthlyData.keys())
+        monthCounts = len(monthlyData.keys())
         averageSpent = totalSpent/monthCounts
         averageIncome = totalIncome/monthCounts
 
         print 'average      spent: ${0:,.2f}        income: ${1:,.2f}'.format(averageSpent, averageIncome)
 
 def main():
-    #setting up 
+    #setting up
     parser = argparse.ArgumentParser(description='Track your incomes and expenditures')
     parser.add_argument('-d', '--ignore-donuts', dest='donut', action='store_true', default=False,
                         help='I love my donuts so much that I don\'t need to include it on my budget')
@@ -132,8 +156,8 @@ def main():
     book = BookKeeper()
 
     #Default case
-    if len(sys.argv) == 1:
-        book.parseData()
+    # if len(sys.argv) == 1:
+    #     book.parseData()
     if args.donut:
         book.noDonut = True
     if args.crystal:
@@ -141,7 +165,7 @@ def main():
     if args.nocc:
         book.noCreditCard = True
 
-    book.parseData()
-    book.showMonthlyIncomeExpenditure()
+    mmap = book.parseData(book.transactions)
+    book.showMonthlyIncomeExpenditure(mmap)
 if __name__ == '__main__':
     main()
