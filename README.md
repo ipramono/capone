@@ -40,7 +40,7 @@ You can simply start running it by:
 ```
 python bookkeeper.py
 ```
-For additional options:
+For additional features, you can start by showing the help text.
 ```
 python bookkeeper.py -h
 ```
